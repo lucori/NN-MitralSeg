@@ -7,3 +7,7 @@ in/
 source/tmp
 source/runs/
 *.ipynb_checkpoints/
+notebooks/experiments/
+notebooks/figures/
+notebooks/legacy/
+notebooks/

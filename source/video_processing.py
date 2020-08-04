@@ -3,7 +3,8 @@ import time
 
 import cv2
 import numpy as np
-from utils_process import crop_outer_part, morphological_transformation_foreground, morphological_transformation_mask
+from utils_process import crop_outer_part, \
+    morphological_transformation_foreground, morphological_transformation_mask
 from utils_process import save_picture, opt_triangular_points, resize_frame
 from collections import Counter
 
@@ -54,8 +55,10 @@ class EchoProcess:
 		matrix that represents the video of the echo
 	"""
 
-    def __init__(self, save_foreground=False, save_overlay=False, validate_cropping=False,
-                 save_cropped_video=False, resize=True, save_frames=False, save_pickle_echo=False, verbose=False,
+    def __init__(self, save_foreground=False, save_overlay=False,
+                 validate_cropping=False,
+                 save_cropped_video=False, resize=True, save_frames=False,
+                 save_pickle_echo=False, verbose=False, crop_meta_data=True,
                  side_length=400):
 
         # parameters
@@ -68,6 +71,7 @@ class EchoProcess:
         self.save_pickle_echo = save_pickle_echo
         self.verbose = verbose
         self.side_length = side_length
+        self.crop_meta_data = crop_meta_data
 
         # variables
         self.echo_info = []
@@ -121,9 +125,15 @@ class EchoProcess:
         self.echo_info = self.echo.get_info()
         if self.verbose:
             print("Working on echo at:", self.echo_info["file_path"])
-        self.generate_foreground_mask(echo)
-        self.create_triangle_mask()
-        mask, top_left, bottom_right = self.triangular_mask, self.left_v, self.right_v
+
+        if self.crop_meta_data:
+            self.generate_foreground_mask(echo)
+            self.create_triangle_mask()
+            mask, top_left, bottom_right = self.triangular_mask, self.left_v, self.right_v
+        else:
+            mask = np.ones(shape=(self.echo.height, self.echo.height))
+            top_left = (0, 0)
+            bottom_right = (self.echo.height, self.echo.height)
 
         if self.resize:
             new_height = self.side_length
@@ -136,11 +146,14 @@ class EchoProcess:
         video_as_3d_array = np.zeros([new_height, new_width])
 
         if self.save_cropped_video:
-            out_file_dir = os.path.join(DIR_PATH, '..', 'out', self.data_folder, 'videos', 'cropped')
-            out_file_path = os.path.join(out_file_dir, self.echo_info["name"]) + '.avi'
+            out_file_dir = os.path.join(DIR_PATH, '..', 'out',
+                                        self.data_folder, 'videos', 'cropped')
+            out_file_path = os.path.join(out_file_dir,
+                                         self.echo_info["name"]) + '.avi'
             os.makedirs(out_file_dir, exist_ok=True)
             fourcc = cv2.VideoWriter_fourcc(*'XVID')
-            out = cv2.VideoWriter(out_file_path, fourcc, self.echo_info["fps"], (new_width, new_height), isColor=False)
+            out = cv2.VideoWriter(out_file_path, fourcc, self.echo_info["fps"],
+                                  (new_width, new_height), isColor=False)
 
         cap = cv2.VideoCapture(file_path)
 
@@ -149,7 +162,8 @@ class EchoProcess:
             if ret:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 frame = np.multiply(frame, mask)
-                frame = frame[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]]
+                frame = frame[top_left[0]:bottom_right[0],
+                        top_left[1]:bottom_right[1]]
                 if self.resize:
                     frame = resize_frame(frame, self.side_length)
                 frame = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX)
@@ -168,34 +182,35 @@ class EchoProcess:
 
         # crop box and segmentation masks accordingly
 
-        box = np.multiply(self.echo.labels['box'], mask)
-        box = box[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]]
+        if self.echo.labels['box'] is not None:
+            box = np.multiply(self.echo.labels['box'], mask)
+            box = box[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]]
 
-        box = np.nan_to_num(box).astype(np.uint8)
+            box = np.nan_to_num(box).astype(np.uint8)
 
-        self.echo.labels['box'] = np.asarray(box, dtype=np.bool)
-
-        if self.resize:
-            box_rs = resize_frame(box, self.side_length)
-            box_rs = np.nan_to_num(box_rs)
-            box_rs = (box_rs > 0.5)
-            self.echo.labels['box'] = box_rs
-
-        assert len(self.echo.labels['masks']) == 3
-
-        for i, seg_mask in enumerate(self.echo.labels['masks']):
-            frame = list(seg_mask.keys())[0]
-            seg = list(seg_mask.values())[0]
-
-            seg = np.multiply(seg, mask)
-            seg = seg[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]]
+            self.echo.labels['box'] = np.asarray(box, dtype=np.bool)
 
             if self.resize:
-                seg = resize_frame(seg, self.side_length)
+                box_rs = resize_frame(box, self.side_length)
+                box_rs = np.nan_to_num(box_rs)
+                box_rs = (box_rs > 0.5)
+                self.echo.labels['box'] = box_rs
 
-            seg = np.nan_to_num(seg)
-            seg = (seg > 0)
-            self.echo.labels['masks'][i] = {frame: seg}
+        if self.echo.labels['masks']:
+
+            for i, seg_mask in enumerate(self.echo.labels['masks']):
+                frame = list(seg_mask.keys())[0]
+                seg = list(seg_mask.values())[0]
+
+                seg = np.multiply(seg, mask)
+                seg = seg[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]]
+
+                if self.resize:
+                    seg = resize_frame(seg, self.side_length)
+
+                seg = np.nan_to_num(seg)
+                seg = (seg > 0)
+                self.echo.labels['masks'][i] = {frame: seg}
 
     def generate_foreground_mask(self, echo):
         """
@@ -214,10 +229,12 @@ class EchoProcess:
 			3d matrix of the echo video cropped and resized
 		"""
         cap = cv2.VideoCapture(self.echo.file_path)
-        fgbg = cv2.bgsegm.createBackgroundSubtractorMOG()
+        fgbg = cv2.createBackgroundSubtractorMOG2()
 
-        self.foreground = np.zeros([self.echo_info["height"], self.echo_info["width"]])
-        self.mask = np.zeros([self.echo_info["height"], self.echo_info["width"]])
+        self.foreground = np.zeros(
+            [self.echo_info["height"], self.echo_info["width"]])
+        self.mask = np.zeros(
+            [self.echo_info["height"], self.echo_info["width"]])
 
         if self.verbose:
             print("Generating foreground and mask..")
@@ -245,15 +262,20 @@ class EchoProcess:
 
         self.mask[self.mask > 0] = 1
 
-        self.foreground = morphological_transformation_foreground(self.foreground)
+        self.foreground = morphological_transformation_foreground(
+            self.foreground)
         self.mask = morphological_transformation_mask(self.mask)
         if self.save_foreground:
-            save_picture(os.path.join(DIR_PATH, '..', 'out', self.data_folder, 'images', 'masks', 'MOG'),
-                         self.echo_info["name"], self.foreground)
+            save_picture(
+                os.path.join(DIR_PATH, '..', 'out', self.data_folder, 'images',
+                             'masks', 'MOG'),
+                self.echo_info["name"], self.foreground)
 
         if self.save_overlay:
-            save_picture(os.path.join(DIR_PATH, '..', 'out', self.data_folder, 'images', 'overlay'),
-                         self.echo_info["name"], self.mask)
+            save_picture(
+                os.path.join(DIR_PATH, '..', 'out', self.data_folder, 'images',
+                             'overlay'),
+                self.echo_info["name"], self.mask)
 
     def create_triangle_mask(self):
         """
@@ -267,12 +289,14 @@ class EchoProcess:
         if self.verbose:
             print("Creating triangle mask...")
 
-        out_file_dir = os.path.join(DIR_PATH, '..', 'out', self.data_folder, 'images', 'cropped')
+        out_file_dir = os.path.join(DIR_PATH, '..', 'out', self.data_folder,
+                                    'images', 'cropped')
 
-        self.triangular_mask, self.left_v, self.right_v = opt_triangular_points(self.mask, self.foreground,
-                                                                                self.validate_cropping, out_file_dir,
-                                                                                self.echo_info["file_path"],
-                                                                                self.echo_info['name'])
+        self.triangular_mask, self.left_v, self.right_v = opt_triangular_points(
+            self.mask, self.foreground,
+            self.validate_cropping, out_file_dir,
+            self.echo_info["file_path"],
+            self.echo_info['name'])
 
     def get_video_frame(self, frame_no, show=False):
         cap = cv2.VideoCapture(self.echo.get_info())

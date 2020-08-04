@@ -3,7 +3,7 @@ import numpy as np
 
 def get_scores(mask, valve, mask_gt, valve_gt):
 
-    # TODO (laumerf): take care of naming, box = mask, valve = mask, etc.
+    # NOTE: mask here means the box (ROI)!
 
     if len(mask.shape) == 3:
         mask = np.squeeze(mask[..., 0])  # predicted mask should be the same everywhere

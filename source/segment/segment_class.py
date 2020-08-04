@@ -23,6 +23,7 @@ class MitralSeg:
         self.m = None
         self.n = None
         self.matrix2d = None
+        self.dir = None
 
     def set_x(self, matrix3d):
         self.matrix3d = matrix3d / 255
@@ -73,30 +74,25 @@ class MitralSeg:
 
     @staticmethod
     def get_valve(sparse, mask, threshold, thresh_func='percentile', morph_op=True, connected_struct=True):
-        # take window of threshold difference between myocardium and reconstruction
-
-        # Masking, anisotropic diffusion, morphological operation, selecting connected components,
 
         if len(mask.shape) == 2:
             mask = np.expand_dims(mask, axis=-1)
         if mask.shape[2] == 1:
             mask = np.repeat(mask, sparse.shape[-1], axis=-1)
 
-        thresh = thresholding_fn(sparse, thresh=threshold, thresh_func=thresh_func)
+        thresh = thresholding_fn(sparse, mask=mask, thresh=threshold, thresh_func=thresh_func)
         valve_masked = thresh * mask
         valve_aniso = np.empty_like(valve_masked)
 
-        # TODO: parameters to tune (kernel size)
-        kernel_erode = np.ones((5, 5), np.uint8)
-        kernel_dilated = np.ones((5, 5), np.uint8)
+        kernel_erode = np.ones((2, 2), np.uint8)
+        kernel_dilated = np.ones((1, 1), np.uint8)
         # anisotropic diffusion to connect segments1, gamma=10,
         for j in range(sparse.shape[2]):
 
-            # TODO: parameters to tune (niter, kappa)
-            valve_diffused = mp.anisotropic_diffusion(valve_masked[:, :, j], niter=5, kappa=20)
+            valve_diffused = mp.anisotropic_diffusion(valve_masked[:, :, j], niter=2, kappa=20, option=3)
 
             if morph_op:
-                valve_diffused = cv2.erode(valve_diffused, kernel_erode, iterations=2)
+                valve_diffused = cv2.erode(valve_diffused, kernel_erode, iterations=1)
                 valve_diffused = cv2.dilate(valve_diffused, kernel_dilated, iterations=1)
 
             valve_aniso[:, :, j] = valve_diffused
@@ -114,13 +110,17 @@ class MitralSeg:
 
             print("Components: ", components)
 
+            if len(components) == 0:
+                print("No components detected")
+                return valve_aniso
+
             valve_aniso = np.zeros(labeled.shape)
             valve_aniso[labeled == components[0][0]] = 1
 
             # include other large components as well
             if len(components) > 1:
                 c_idx = 1
-                while components[c_idx][1] > 0.1 * components[0][1]:
+                while components[c_idx][1] > 0.3 * components[0][1]:
                     print("Including next largest connected component.")
                     valve_aniso[labeled == components[c_idx][0]] = 1
                     c_idx += 1

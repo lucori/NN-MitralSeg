@@ -9,8 +9,10 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 
 
 class SegRNMF(MitralSeg):
-    def __init__(self, sparsity_coef, max_iter, opt_flow_window_size, search_window_size, option='rnmf_seg',
-                 window_size=(60, 80), init='nmf', rank=2, thresh1=95, thresh2=98, stride=10, time_series_masking=False):
+    def __init__(self, sparsity_coef, max_iter, opt_flow_window_size,
+                 search_window_size, threshold_wd, option='rnmf_seg',
+                 window_size=(60, 80), init='nmf', rank=2, thresh1=95,
+                 thresh2=98, stride=10, time_series_masking=False):
 
         super(SegRNMF, self).__init__()
         self.sparsity_coef = sparsity_coef
@@ -25,12 +27,14 @@ class SegRNMF(MitralSeg):
         self.search_window_size = search_window_size
         self.opt_flow_window_size = opt_flow_window_size
         self.time_series_masking = time_series_masking
+        self.threshold_wd = threshold_wd
 
     def rnmf(self, matrix2d, sparsity_coef):
 
         i = 0
         if self.init == 'nmf':
-            model = NMF(n_components=self.k, init='random', random_state=0, max_iter=200, tol=0.0001)
+            model = NMF(n_components=self.k, init='random', random_state=0,
+                        max_iter=800, tol=0.00001)
             W = model.fit_transform(matrix2d)
             H = model.components_
         else:
@@ -74,11 +78,13 @@ class SegRNMF(MitralSeg):
 
     def train(self, save_location=None):
 
-        def reshape_to_tensor(a): return np.reshape(a, newshape=(self.vert, self.horz, self.m))
+        def reshape_to_tensor(a): return np.reshape(a, newshape=(
+        self.vert, self.horz, self.m))
 
         # RNMF on 2D representation
         print("RNMF #1")
-        W1, H1, S1 = self.rnmf(self.matrix2d, sparsity_coef=self.sparsity_coef[0])
+        W1, H1, S1 = self.rnmf(self.matrix2d,
+                               sparsity_coef=self.sparsity_coef[0])
 
         # threshold S
         S1 = thresholding_fn(S1, thresh=self.thresh1)
@@ -89,10 +95,14 @@ class SegRNMF(MitralSeg):
         W1H1 = reshape_to_tensor(W1H1)
         S1 = reshape_to_tensor(S1)
 
-        win, _, _ = window_detection(tensor=S1, option=self.option, time_series=H1.T, window_size=self.window_size,
+        win, _, _ = window_detection(tensor=S1, option=self.option,
+                                     time_series=H1.T,
+                                     window_size=self.window_size,
                                      search_window_size=self.search_window_size,
                                      opt_flow_window_size=self.opt_flow_window_size,
-                                     stride=self.stride, time_series_masking=self.time_series_masking)
+                                     stride=self.stride,
+                                     time_series_masking=self.time_series_masking,
+                                     threshold=self.threshold_wd)
         mask = win[0]
 
         # remove valve from RNMF reconstruction
@@ -109,7 +119,8 @@ class SegRNMF(MitralSeg):
         myocardium = reshape_to_tensor(W2H2)
         # get valve by taking difference from original reconstruction and reconstruction without valve
         print("Getting Valve")
-        valve = self.get_valve(M - myocardium, mask, self.thresh2, morph_op=False, connected_struct=False)
+        valve = self.get_valve(M - myocardium, mask, self.thresh2,
+                               morph_op=False, connected_struct=False)
 
         self.valve = valve
         self.myocardium = myocardium
@@ -123,5 +134,6 @@ class SegRNMF(MitralSeg):
                      's_2': reshape_to_tensor(M - myocardium)}
 
         self.save_data(data_dict, save_location=save_location)
-        eval_dict = get_scores(self.mask, self.valve, self.mask_gt, self.valve_gt)
+        eval_dict = get_scores(self.mask, self.valve, self.mask_gt,
+                               self.valve_gt)
         return eval_dict

@@ -4,6 +4,8 @@ import numpy as np
 import shutil
 import scipy.misc
 import glob
+
+from utils_process import save_zipped_pickle
 from video_processing import EchoProcess
 import pickle
 import json
@@ -16,7 +18,7 @@ class DataMaster:
     def __init__(self, conf):
         self.conf = conf
 
-        self.df = os.path.join(DIR_PATH, self.conf['Load_Save']['data_folder'])
+        self.df = os.path.join(DIR_PATH, self.conf['Load_Save']['raw_data_folder'])
         classes = json.loads(self.conf.get('Load_Save', 'classes'))
         views = json.loads(self.conf.get('Load_Save', 'views'))
         verbose = self.conf['Video_Processing']['verbose']
@@ -24,12 +26,13 @@ class DataMaster:
 
     def load(self):
         if self.conf.getboolean('Load_Save', 'load_dataset'):
-            self.dt = self.dt.load_pickle(self.conf['Load_Save']['pickle_name'])
+            self.dt = self.dt.load_pickle(
+                self.conf['Load_Save']['pickle_name'])
         if self.conf.getboolean('Load_Save', 'load_echos_from_pickle'):
             self.dt = self.dt.load_pickle_multiple_file()
         if not self.dt.populated:
             self.dt.populate()
-            processor = EchoProcess(*self.conf.get_par_video_processing())
+            processor = EchoProcess(**self.conf.get_par_video_processing())
             processor.process_dataset(self.dt)
             if self.conf.getboolean('Load_Save', 'save_dataset'):
                 self.dt.save_pickle('test_dataset')
@@ -89,11 +92,13 @@ class DataCollection:
         if os.path.isdir(self.data_folder):
             for dirpath, dirnames, filenames in os.walk(self.data_folder):
                 for filename in [f for f in filenames if
-                                 (f.endswith(".avi") or f.endswith(".wmv")) and not f.startswith(".")]:
+                                 (f.endswith(".avi") or f.endswith(
+                                     ".wmv")) and not f.startswith(".")]:
                     file_path = os.path.join(dirpath, filename)
                     statinfo = os.stat(file_path)
                     if statinfo.st_size != 0:
-                        ec = Echo(file_path, self.data_folder, self.classes, self.views)
+                        ec = Echo(file_path, self.data_folder, self.classes,
+                                  self.views)
                         if not ec.exclude:
                             self.file_path_names.append(file_path)
                             self.echos.append(ec)
@@ -108,10 +113,12 @@ class DataCollection:
         if os.path.isdir(self.data_folder):
             for dirpath, dirnames, filenames in os.walk(self.data_folder):
                 for filename in [f for f in filenames if
-                                 (f.endswith(".avi") or f.endswith(".wmv")) and not f.startswith(".")]:
+                                 (f.endswith(".avi") or f.endswith(
+                                     ".wmv")) and not f.startswith(".")]:
                     file_path = os.path.join(dirpath, filename)
                     statinfo = os.stat(file_path)
-                    ec = Echo(file_path, self.data_folder, self.classes, self.views)
+                    ec = Echo(file_path, self.data_folder, self.classes,
+                              self.views)
                     if statinfo.st_size != 0 and not ec.exclude and ec.chamber_view in view:
                         self.files_saved.append(file_path)
                     elif statinfo.st_size != 0:
@@ -132,7 +139,8 @@ class DataCollection:
         numpy array
         	array of boolean describing the target of each ech
         """
-        y = np.array([ech.diagnosis for ech in self.echos if ech.chamber_view == view])
+        y = np.array(
+            [ech.diagnosis for ech in self.echos if ech.chamber_view == view])
         y = np.reshape(y, (-1, 1))
 
         return y
@@ -169,7 +177,9 @@ class DataCollection:
 		name : string
 			name of the pickle file in which to save in
 		"""
-        out_file_dir = os.path.join(DIR_PATH, '..', 'out', os.path.basename(self.data_folder), 'pickle')
+        out_file_dir = os.path.join(DIR_PATH, '..', 'out',
+                                    os.path.basename(self.data_folder),
+                                    'pickle')
         os.makedirs(out_file_dir, exist_ok=True)
         with open(os.path.join(out_file_dir, name + '.pkl'), 'wb') as output:
             pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
@@ -188,7 +198,9 @@ class DataCollection:
 		DataCollection object
 			data collection that was saved in the pickle file
 		"""
-        out_file_dir = os.path.join(DIR_PATH, '..', 'out', os.path.basename(self.data_folder), 'pickle')
+        out_file_dir = os.path.join(DIR_PATH, '..', 'out',
+                                    os.path.basename(self.data_folder),
+                                    'pickle')
         os.makedirs(out_file_dir, exist_ok=True)
         out_file_name = os.path.join(out_file_dir, name + '.pkl')
         with open(out_file_name, 'rb') as output:
@@ -215,7 +227,9 @@ class DataCollection:
 
 		"""
 
-        out_file_dir = os.path.join(DIR_PATH, '..', 'out', os.path.basename(self.data_folder), 'pickle')
+        out_file_dir = os.path.join(DIR_PATH, '..', 'out',
+                                    os.path.basename(self.data_folder),
+                                    'pickle')
         if os.path.isdir(out_file_dir):
             for dirpath, dirnames, filenames in os.walk(out_file_dir):
                 for filename in [f for f in filenames if f.endswith(".pkl")]:
@@ -226,7 +240,8 @@ class DataCollection:
                         with open(file_path, 'rb') as output:
                             try:
                                 if self.verbose:
-                                    print("loading from pickle file ", filename)
+                                    print("loading from pickle file ",
+                                          filename)
                                 ec = pickle.load(output)
                                 output.close()
                             except EOFError:
@@ -256,6 +271,7 @@ class Echo:
     def __init__(self, file_path, data_folder, classes, views):
         self.file_path = file_path
         self.data_folder = data_folder
+        self.pickle_folder = None
         self.echo_name = None
         self.diagnosis = None
         self.chamber_view = None
@@ -271,7 +287,7 @@ class Echo:
         self.views = views
         self.exclude = False
         self.labels = {'masks': [], 'box': None}
-
+        self.name_data = "new_data"
         self.open()
 
     def open(self):
@@ -279,9 +295,14 @@ class Echo:
         Opens the echo video according to the file path and set the meta information about it
         """
         cap = cv2.VideoCapture(self.file_path)
-        file_name = os.path.split(os.path.split(self.file_path)[0])[1] + \
-                    os.path.splitext(os.path.basename(self.file_path))[0].upper()
-        if self.classes[0] in self.file_path:
+        file_name = os.path.splitext(os.path.basename(self.file_path))[0].upper()
+
+        self.name_data = os.path.basename(os.path.dirname(os.path.dirname(self.file_path)))
+
+        if not self.classes:
+            self.diagnosis = "unknown"
+            self.echo_name = file_name
+        elif self.classes[0] in self.file_path:
             self.echo_name = self.classes[0] + file_name
             self.diagnosis = 1
         elif self.classes[1] in self.file_path:
@@ -289,7 +310,7 @@ class Echo:
             self.diagnosis = 0
         else:
             print("Unknown diagnosis in file:", self.file_path)
-            self.diagnosis = "unknown"
+            self.diagnosis = "diagnosis_unknown"
             self.exclude = True
 
         self.width = int(cap.get(3))
@@ -310,33 +331,48 @@ class Echo:
             self.exclude = True
 
         cap.release()
-        if self.views[0].lower() in self.echo_name.lower():
-            self.chamber_view = self.views[0]
-        elif self.views[1].lower() in self.echo_name.lower():
-            self.chamber_view = self.views[1]
-        else:
-            print("Unknown chamber-view in file:", self.file_path)
-            self.chamber_view = -1
-            self.exclude = True
+        if not self.views:
+            # no view provided
+            self.chamber_view = "view_unknown"
+
+        elif len(self.views) > 1:
+            for view in self.views:
+                if view.lower() in self.echo_name.lower():
+                    self.chamber_view = view
+
+            if not self.chamber_view:
+                print("Unknown chamber-view in file:", self.file_path)
+                self.chamber_view = -1
+                self.exclude = True
 
         # store segmentation masks and box
         directory = os.path.dirname(self.file_path)
-        masks = [f for f in glob.glob(directory + "/**mask.png", recursive=True)]
-
-        assert len(masks) == 3
+        masks = [f for f in
+                 glob.glob(directory + "/**mask.png", recursive=True)]
 
         box = [f for f in glob.glob(directory + "/box.jpg", recursive=True)]
-        assert len(box) == 1
+
+        if len(masks) == 0 or len(box) == 0:
+            print(self.echo_name)
+            print("No labels provided. Add ####_mask.png and/or box.jpg")
+            return
+
+        if len(masks) != 3:
+            print("This folder ({}) does not contain 3 maskes.".format(file_name))
 
         img = np.asarray(Image.open(box[0]))
-        img = (1 * (~((img[..., 0] == 255) * (img[..., 1] == 255) * (img[..., 2] == 255)))).astype(np.uint8)
+        img = (1 * (~((img[..., 0] >= 245) * (img[..., 1] >= 245) * (
+                img[..., 2] >= 245)))).astype(np.uint8)
 
         self.labels['box'] = img
 
         for f in sorted(masks):
+
+            # valve ground-truth as png as 4 color dimension and last is masking
             img = np.asarray(Image.open(f))
             frame = int(os.path.basename(f).split('_mask')[0])
-            self.labels['masks'].append({str(frame): (1 * (img[..., -1] == 255)).astype(np.uint8)})
+            self.labels['masks'].append(
+                {str(frame): (1 * (img[..., -1] == 255)).astype(np.uint8)})
 
     def get_info(self):
         """
@@ -374,7 +410,9 @@ class Echo:
         """
         echo_name = (os.path.splitext(self.echo_name))[0].upper()
         n_frames = self.matrix3d.shape[2]
-        out_path = os.path.join(DIR_PATH, '..', 'out', os.path.basename(self.data_folder), 'frames', self.chamber_view,
+        out_path = os.path.join(DIR_PATH, '..', 'out',
+                                os.path.basename(self.data_folder), 'frames',
+                                self.chamber_view,
                                 echo_name)
         if not os.path.exists(out_path):
             os.makedirs(out_path)
@@ -387,19 +425,19 @@ class Echo:
 
         for f in range(0, n_frames):
             frame = ndarray[:, :, f]
-            Image.fromarray(frame).save(os.path.join(out_path, str(f).zfill(3) + ".jpg"))
+            Image.fromarray(frame).save(
+                os.path.join(out_path, str(f).zfill(3) + ".jpg"))
 
     def save_pickle(self):
         """
         Saves the provided 3D array as a pickle file
         """
         echo_name = (os.path.splitext(self.echo_name))[0].upper()
-        out_path = os.path.join(DIR_PATH, '..', 'out', os.path.basename(self.data_folder), 'pickle', self.chamber_view)
+        out_path = os.path.join(DIR_PATH, '..', 'data', 'in', 'processed', self.name_data)
         if not os.path.exists(out_path):
             os.makedirs(out_path)
 
-        with open(os.path.join(out_path, echo_name + '.pkl'), 'wb') as output:
-            pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
+        save_zipped_pickle(self, os.path.join(out_path, echo_name + '.pkl'),
+                           protocol=-1)
 
-
-
+        self.pickle_folder = out_path

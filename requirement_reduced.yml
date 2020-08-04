@@ -1,0 +1,17 @@
+name: mv
+channels:
+  - defaults
+dependencies:
+  - python=3.8
+  - matplotlib
+  - scikit-image
+  - yaml
+  - pyyaml
+  - jupyterlab
+  - cudatoolkit=10.2
+  - torchvision
+  - pytorch
+  - scikit-learn
+  - tensorboard
+prefix: /home/fabian/anaconda3/envs/mv
+

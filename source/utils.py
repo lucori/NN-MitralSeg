@@ -11,8 +11,10 @@ def animate(tensor, valve=None, name=None):
     fig, ax = plt.subplots(figsize=(8, 8))
 
     def update(j):
-        ax.imshow(masked_array(tensor[:, :, j], 1 - valve[:, :, j]), cmap='rainbow')
-        ax.imshow(-masked_array(tensor[:, :, j], valve[:, :, j]), cmap='binary')
+        ax.imshow(masked_array(tensor[:, :, j], 1 - valve[:, :, j]),
+                  cmap='rainbow')
+        ax.imshow(-masked_array(tensor[:, :, j], valve[:, :, j]),
+                  cmap='binary')
         ax.set_axis_off()
 
     anim = FuncAnimation(fig, update, frames=tensor.shape[-1], interval=100)
@@ -27,31 +29,44 @@ def optical_flow(tensor, winsize):
     if winsize <= 1:
         winsize = int(winsize * tensor.shape[1])
 
-    flow = np.zeros(shape=(tensor.shape[0], tensor.shape[1], tensor.shape[2] - 1))
+    flow = np.zeros(
+        shape=(tensor.shape[0], tensor.shape[1], tensor.shape[2] - 1))
     for i in range(tensor.shape[2] - 1):
-        flow_val = cv2.calcOpticalFlowFarneback(tensor[:, :, i], tensor[:, :, i + 1], flow=None, pyr_scale=0.5,
+        flow_val = cv2.calcOpticalFlowFarneback(tensor[:, :, i],
+                                                tensor[:, :, i + 1], flow=None,
+                                                pyr_scale=0.5,
                                                 levels=1,
-                                                winsize=winsize, iterations=3, poly_n=7, poly_sigma=3.5, flags=1)
-        flow[:, :, i] = np.sqrt(np.square(flow_val[:, :, 1]) + np.square(flow_val[:, :, 0]))
+                                                winsize=winsize, iterations=3,
+                                                poly_n=7, poly_sigma=3.5,
+                                                flags=1)
+        flow[:, :, i] = np.sqrt(
+            np.square(flow_val[:, :, 1]) + np.square(flow_val[:, :, 0]))
 
     return flow
 
 
-def thresholding_fn(tensor, thresh, thresh_func='percentile'):
-    matrix = np.copy(tensor)  # copy to prevent that the passed tensor is modified
+def thresholding_fn(tensor, thresh, mask=None, thresh_func='percentile'):
+    matrix = np.copy(
+        tensor)  # copy to prevent that the passed tensor is modified
 
     if thresh_func == 'percentile':
         # calculate threshold value for given percentile
-        thresh_val = np.percentile(matrix, q=thresh)
+        if mask is not None:
+            # calculate treshhold based on values inside window!
+            thresh_val = np.percentile(matrix*mask, q=thresh)
+        else:
+            thresh_val = np.percentile(matrix, q=thresh)
         # assign binary values to pixels above and below threshold
         matrix[matrix < thresh_val] = matrix[matrix < thresh_val] * 0
 
     else:
         for i in range(matrix.shape[2]):
-            matrix[:, :, i] = cv2.GaussianBlur(np.array(matrix[:, :, i] * 255, dtype=np.uint8), (21, 21),
-                                               sigmaX=0.5, sigmaY=0.5)
-            _, matrix[:, :, i] = cv2.threshold(np.array(matrix[:, :, i], dtype=np.uint8), 0, 255,
-                                               cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            matrix[:, :, i] = cv2.GaussianBlur(
+                np.array(matrix[:, :, i] * 255, dtype=np.uint8), (21, 21),
+                sigmaX=0.5, sigmaY=0.5)
+            _, matrix[:, :, i] = cv2.threshold(
+                np.array(matrix[:, :, i], dtype=np.uint8), 0, 255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     return matrix
 
@@ -60,13 +75,15 @@ def denoise(h, matrix):
     denoised = np.empty_like(matrix)
 
     for i in range(matrix.shape[2]):
-        denoised[:, :, i] = cv2.fastNlMeansDenoising(np.array(matrix[:, :, i] * 255, dtype=np.uint8), h=h,
-                                                     templateWindowSize=5, searchWindowSize=11)
+        denoised[:, :, i] = cv2.fastNlMeansDenoising(
+            np.array(matrix[:, :, i] * 255, dtype=np.uint8), h=h,
+            templateWindowSize=5, searchWindowSize=11)
     denoised = denoised / 255
     return denoised
 
 
-def find_window(tensor, win_size, search_win_size, stride=5, offset_fac_vert=0.0, offset_fac_horz=0.0):
+def find_window(tensor, win_size, search_win_size, stride=1,
+                offset_fac_vert=0.0, offset_fac_horz=0.0):
     # works as well for integrated (over time) input tensor
     if len(tensor.shape) == 2:
         tensor = np.expand_dims(tensor, axis=-1)
@@ -89,13 +106,15 @@ def find_window(tensor, win_size, search_win_size, stride=5, offset_fac_vert=0.0
         search_win_size_vert = int(search_win_size[0])
         search_win_size_horz = int(search_win_size[1])
 
-    norms = np.zeros(shape=(vert - search_win_size_vert, horz - search_win_size_horz))
+    norms = np.zeros(
+        shape=(vert - search_win_size_vert, horz - search_win_size_horz))
 
     for i in np.arange(0, vert - search_win_size_vert, stride):
         for j in np.arange(0, horz - search_win_size_horz, stride):
-            norms[int(i), int(j)] = np.linalg.norm(tensor[int(i):int(i) + search_win_size_vert,
-                                                   int(j):int(j) + search_win_size_horz,
-                                                   :])
+            norms[int(i), int(j)] = np.linalg.norm(
+                tensor[int(i):int(i) + search_win_size_vert,
+                int(j):int(j) + search_win_size_horz,
+                :])
 
     # get index for window with maximum Frobenius norm
     window_index = np.unravel_index(np.argmax(norms), shape=norms.shape)
@@ -110,13 +129,16 @@ def find_window(tensor, win_size, search_win_size, stride=5, offset_fac_vert=0.0
     hgt_ind += int(search_win_size_vert / 2) + offset_vert
     wdh_ind += int(search_win_size_horz / 2) + offset_horz
 
-    mask[np.max([0, hgt_ind - int(win_size_vert / 2)]):(hgt_ind + int(win_size_vert / 2)),
-    np.max([0, wdh_ind - int(win_size_horz / 2)]):(wdh_ind + int(win_size_horz / 2))] = 1
+    mask[np.max([0, hgt_ind - int(win_size_vert / 2)]):(
+                hgt_ind + int(win_size_vert / 2)),
+    np.max([0, wdh_ind - int(win_size_horz / 2)]):(
+                wdh_ind + int(win_size_horz / 2))] = 1
 
     return mask
 
 
-def get_mask(s, option, win_size, s_win_size, opt_flow_window_size, time_series=None, t_idx=None, thresh=95, stride=10):
+def get_mask(s, option, win_size, s_win_size, opt_flow_window_size,
+             stride, thresh, time_series=None, t_idx=None):
     # mask by time series
     t = time_series
     if t_idx is not None:
@@ -124,7 +146,8 @@ def get_mask(s, option, win_size, s_win_size, opt_flow_window_size, time_series=
         t_ = t[..., t_idx]
         # resacle to 0, 1
         t_ = (t_ - np.min(t_)) / (np.max(t_) - np.min(t_))
-        s_ = np.moveaxis(np.asarray([s[..., i] * t_[i] for i in range(t.shape[0])]), 0, -1)
+        s_ = np.moveaxis(
+            np.asarray([s[..., i] * t_[i] for i in range(t.shape[0])]), 0, -1)
     else:
         s_ = s
 
@@ -142,17 +165,20 @@ def get_mask(s, option, win_size, s_win_size, opt_flow_window_size, time_series=
     assert len(s_thresh.shape) == 3
 
     # find window
-    # TODO check this vertical offsets, maybe remove
-    mask_thresh = find_window(s_thresh, win_size, s_win_size, stride=stride, offset_fac_vert=0.05, offset_fac_horz=0.05)
+    mask_thresh = find_window(s_thresh, win_size, s_win_size, stride=stride,
+                              offset_fac_vert=0.05, offset_fac_horz=0.05)
 
     return mask_thresh, np.sum(np.abs(s_thresh), axis=-1)
 
 
-def window_detection(tensor, option, window_size, search_window_size, opt_flow_window_size, stride,
+def window_detection(tensor, option, window_size, search_window_size,
+                     opt_flow_window_size, stride, threshold,
                      time_series=None, time_series_masking=True):
     # apply softplus to the time series
     if time_series_masking and time_series is not None:
         time_series = softplus(time_series)
+    else:
+        time_series_masking = False
 
     vert = tensor.shape[0]
     horz = tensor.shape[1]
@@ -164,25 +190,36 @@ def window_detection(tensor, option, window_size, search_window_size, opt_flow_w
         win_size_vert = int(window_size[0])
         win_size_horz = int(window_size[1])
 
-    mask, opt_flow = get_mask(tensor, option, window_size, search_window_size, opt_flow_window_size,
-                                  time_series=time_series, t_idx=None, thresh=95, stride=stride)
+    mask, opt_flow = get_mask(tensor, option, window_size, search_window_size,
+                              opt_flow_window_size,
+                              time_series=time_series, t_idx=None,
+                              thresh=threshold,
+                              stride=stride)
 
     if time_series_masking:
-        mask_0, opt_flow_0 = get_mask(tensor, option, window_size, search_window_size, opt_flow_window_size,
-                                      time_series=time_series, t_idx=0, thresh=95, stride=stride)
-        mask_1, opt_flow_1 = get_mask(tensor, option, window_size, search_window_size, opt_flow_window_size,
-                                      time_series=time_series, t_idx=1, thresh=95, stride=stride)
+        mask_0, opt_flow_0 = get_mask(tensor, option, window_size,
+                                      search_window_size, opt_flow_window_size,
+                                      time_series=time_series, t_idx=0,
+                                      thresh=threshold, stride=stride)
+        mask_1, opt_flow_1 = get_mask(tensor, option, window_size,
+                                      search_window_size, opt_flow_window_size,
+                                      time_series=time_series, t_idx=1,
+                                      thresh=threshold, stride=stride)
 
-        mid_point_vert_0 = int((np.where(mask_0)[0][0] + np.where(mask_0)[0][-1]) / 2)
-        mid_point_vert_1 = int((np.where(mask_1)[0][0] + np.where(mask_1)[0][-1]) / 2)
+        mid_point_vert_0 = int(
+            (np.where(mask_0)[0][0] + np.where(mask_0)[0][-1]) / 2)
+        mid_point_vert_1 = int(
+            (np.where(mask_1)[0][0] + np.where(mask_1)[0][-1]) / 2)
 
-        mid_point_horz_0 = int((np.where(mask_0)[1][0] + np.where(mask_0)[1][-1]) / 2)
-        mid_point_horz_1 = int((np.where(mask_1)[1][0] + np.where(mask_1)[1][-1]) / 2)
+        mid_point_horz_0 = int(
+            (np.where(mask_0)[1][0] + np.where(mask_0)[1][-1]) / 2)
+        mid_point_horz_1 = int(
+            (np.where(mask_1)[1][0] + np.where(mask_1)[1][-1]) / 2)
 
-        # check if overlap is very small
-        # TODO parameter to tune (allowed_overlap)
-        allowed_overlap = 0.1  # good results with 0.1 (but also depends on window size)
-        if np.sum(np.logical_and(mask_0, mask_1)) < allowed_overlap * np.sum(mask_1):
+        # check if overlap
+        allowed_overlap = 0.5
+        if np.sum(np.logical_and(mask_0, mask_1)) < allowed_overlap * np.sum(
+                mask_1):
             print("Two different valves detected! Take right one!")
 
             # take right window
@@ -204,7 +241,7 @@ def window_detection(tensor, option, window_size, search_window_size, opt_flow_w
             horz_off = int(win_size_horz / 2)
 
             mask[np.max([0, mid_vert - vert_off]):mid_vert + vert_off,
-                 np.max([mid_horz - horz_off]):mid_horz + horz_off] = 1.0
+            np.max([mid_horz - horz_off]):mid_horz + horz_off] = 1.0
 
         return (mask, opt_flow), (mask_0, opt_flow_0), (mask_1, opt_flow_1)
 
@@ -213,7 +250,8 @@ def window_detection(tensor, option, window_size, search_window_size, opt_flow_w
 
 def get_free_gpu():
     os.system('nvidia-smi -q -d Memory |grep -A4 GPU|grep Free >tmp')
-    memory_available = [int(x.split()[2]) for x in open('tmp', 'r').readlines()]
+    memory_available = [int(x.split()[2]) for x in
+                        open('tmp', 'r').readlines()]
     return np.argmax(memory_available)
 
 
@@ -284,13 +322,15 @@ def get_valve_image(idx, dt, pred):
     valve_pred = np.squeeze(pred[..., valve_idx])
     valve_image = np.clip(np.dstack([0.75 * frame + valve_pred,
                                      0.75 * frame,
-                                     0.75 * frame + valve_values]), a_min=0, a_max=1)
+                                     0.75 * frame + valve_values]), a_min=0,
+                          a_max=1)
 
     return valve_image
 
 
 def softplus(x):
-    return np.where(x == -np.infty, 0, x * (x >= 0) + np.log1p(np.exp(-np.abs(x))))
+    return np.where(x == -np.infty, 0,
+                    x * (x >= 0) + np.log1p(np.exp(-np.abs(x))))
 
 
 def softminus(x):

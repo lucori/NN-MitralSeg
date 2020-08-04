@@ -12,6 +12,8 @@ from utils import window_detection
 import numpy as np
 from utils import animate, colorize, refactor, softplus
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('agg')
 from torch.utils.tensorboard import SummaryWriter
 import time
 
@@ -20,15 +22,16 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 
 class SegNNMF(MitralSeg):
 
-    def __init__(self, l1_mult, l21_mult, embedding_mult, epochs, learning_rate, mlp_size, gmf_size, batchsize,
+    def __init__(self, l1_mult, l21_mult, embedding_mult, n_steps, learning_rate, mlp_size, gmf_size, batchsize,
                  num_workers, device, embedding_nmf_init, gmf_net_init, mlp_layers, threshold_layers, window_size,
                  save_data_every, save_tensorboard_summary_every, search_window_size, opt_flow_window_size,
-                 train_test_split, patience, min_delta, early_stopping, connected_struct, morph_op):
+                 train_test_split, patience, min_delta, early_stopping, connected_struct, morph_op, option,
+                 threshold_mv, threshold_wd):
 
         super(SegNNMF, self).__init__()
         self.mlp_size = mlp_size
         self.gmf_size = gmf_size
-        self.epochs = epochs
+        self.n_steps = n_steps
         self.l1_mult = l1_mult
         self.l21_mult = l21_mult
         self.embedding_mult = embedding_mult
@@ -40,7 +43,7 @@ class SegNNMF(MitralSeg):
         self.gmf_net_init = gmf_net_init
         self.mlp_layers = mlp_layers
         self.threshold_layers = threshold_layers
-        self.option = 'optical_flow'
+        self.option = option
         self.nnmf = NNMF(self.gmf_size, self.mlp_size, self.mlp_layers, self.threshold_layers)
         self.window_size = window_size
         self.search_window_size = search_window_size
@@ -62,6 +65,9 @@ class SegNNMF(MitralSeg):
         self.embedding_opt = None
         self.neu_mf_opt = None
         self.threshold_opt = None
+        self.epochs = None
+        self.threshold_mv = threshold_mv
+        self.threshold_wd = threshold_wd
 
     def l1_loss(self, s_out):
         loss = torch.mean(torch.abs(s_out))
@@ -78,6 +84,7 @@ class SegNNMF(MitralSeg):
         self.nnmf.set_matrix(self.matrix2d, embedding_nmf_init)
         # create data loader
         print('loading dataset')
+        self.epochs = int(self.n_steps / (matrix3d.size / self.batchsize))
         (self.train_loader, self.val_loader) = load_dataset(self.matrix2d, batch_size=self.batchsize,
                                                             num_workers=self.num_workers,
                                                             train_test_split=self.train_test_split)
@@ -144,7 +151,10 @@ class SegNNMF(MitralSeg):
                 cum_l1_loss = 0
                 cum_embedding_reg = 0
             for batch_id, batch in enumerate(self.train_loader, 0):
-                pixel, frame, target = Variable(batch[0]), Variable(batch[1]), Variable(batch[2])
+                pixel = Variable(batch[0])
+                frame = Variable(batch[1])
+                target = Variable(batch[2])
+
                 # send x_hat and s to gpu
                 pixel = pixel.to(self.device)
                 frame = frame.to(self.device)
@@ -153,13 +163,12 @@ class SegNNMF(MitralSeg):
                 self.batchsize_eff = pixel.shape[0]
                 # forward pass
                 x_out, s_out = self.nnmf.forward(pixel, frame, target)
-                l21_baseline = self.l21_loss(self.s)
                 self.s[pixel, frame] = torch.squeeze(s_out)
                 # compute losses
                 mse_xs_loss = nn.functional.mse_loss(target, x_out + s_out)
                 mse_x_loss = nn.functional.mse_loss(target, x_out)
                 l1_loss = self.l1_loss(s_out)
-                l21_loss = self.l21_loss(self.s)
+                l21_loss = 0  # self.l21_loss(self.s)
                 embedding_reg = self.nnmf.embedding_regularization(pixel, frame)
 
                 # backward and step
@@ -171,37 +180,47 @@ class SegNNMF(MitralSeg):
                 start_time = time.time()
                 self.x_hat[pixel, frame] = torch.squeeze(x_out.detach())
                 self.s = self.s.detach()
-                time_detach += time.time() - start_time
-                if global_step % 100 == 0:
+                time_detach = time_detach + time.time() - start_time
+
+                if global_step % (self.epochs*5) == 0:
                     data_dict = {'mse_x': mse_x_loss,
                                  'mse_xs': mse_xs_loss,
                                  'embedding_regularization': embedding_reg,
                                  'l1_loss': l1_loss,
                                  'l21_loss': l21_loss}
+
+                    # Print training progress every 100 steps
+                    print(data_dict)
+
                     self.save_scalar_summary(data_dict, train_writer, global_step)
                     self.s_reshape = np.reshape(self.s.cpu().numpy(), newshape=(self.vert, self.horz, self.m))
                     self.myocardium = np.reshape(self.x_hat.cpu().numpy(), newshape=(self.vert, self.horz, self.m))
-                    mlp_u = self.nnmf.mlp_u.weight.detach().cpu().numpy()
-                    mlp_v = self.nnmf.mlp_v.weight.detach().cpu().numpy()
-                    gmf_u = self.nnmf.gmf_u.weight.detach().cpu().numpy()
-                    gmf_v = self.nnmf.gmf_v.weight.detach().cpu().numpy()
-                    data_dict = {'myocardium' + str(global_step): self.myocardium,
-                                 's' + str(global_step): self.s_reshape,
-                                 'gmf_u' + str(global_step): gmf_u,
-                                 'gmf_v' + str(global_step): gmf_v,
-                                 'mlp_u' + str(global_step): mlp_u,
-                                 'mlp_v' + str(global_step): mlp_v}
-                    self.save_data(data_dict, save_location=save_location)
+
+                    ## takes a lot of space if saved regularily
+                    # mlp_u = self.nnmf.mlp_u.weight.detach().cpu().numpy()
+                    # mlp_v = self.nnmf.mlp_v.weight.detach().cpu().numpy()
+                    # gmf_u = self.nnmf.gmf_u.weight.detach().cpu().numpy()
+                    # gmf_v = self.nnmf.gmf_v.weight.detach().cpu().numpy()
+
+                    # data_dict = {'myocardium' + str(global_step): self.myocardium,
+                    #              's' + str(global_step): self.s_reshape,
+                    #              'gmf_u' + str(global_step): gmf_u,
+                    #              'gmf_v' + str(global_step): gmf_v,
+                    #              'mlp_u' + str(global_step): mlp_u,
+                    #              'mlp_v' + str(global_step): mlp_v}
+
+                    # self.save_data(data_dict, save_location=save_location)
+
                 if self.early_stopping:
                     cum_mse_xs_loss += mse_xs_loss.detach() / len(self.train_loader)
                     cum_mse_x_loss += mse_x_loss.detach() / len(self.train_loader)
                     cum_l1_loss += l1_loss.detach() / len(self.train_loader)
                     cum_embedding_reg += embedding_reg.detach() / len(self.train_loader)
-                global_step += 1
 
-            if ep % self.save_data_every == 0 or ep == self.epochs - 1:
-                print('finish epoch in ', time.time() - start_time_epoch, "seconds")
-                print('detach time', time_detach, "seconds")
+                # batches
+                global_step = global_step + 1
+
+            if ep == 0 or (ep % self.save_data_every == 0 or ep == self.epochs - 1):
                 print('extracting tensors for segmentation')
                 start_time = time.time()
                 self.s_reshape = np.reshape(self.s.cpu().numpy(), newshape=(self.vert, self.horz, self.m))
@@ -210,28 +229,33 @@ class SegNNMF(MitralSeg):
                 print("window detection...")
                 start_time = time.time()
 
-                win, _, _ = window_detection(tensor=self.s_reshape, option='optical_flow',
+                # detect window
+                win, _, _ = window_detection(tensor=self.s_reshape, option=self.option,
                                              time_series=self.nnmf.gmf_v.weight.detach().cpu().numpy(),
                                              window_size=self.window_size,
                                              search_window_size=self.search_window_size,
-                                             opt_flow_window_size=self.opt_flow_window_size, stride=10)
+                                             opt_flow_window_size=self.opt_flow_window_size,
+                                             threshold=self.threshold_wd,
+                                             stride=2)
 
                 self.mask = win[0]
 
                 print('finish window detection in ', time.time() - start_time, "seconds")
                 start_time = time.time()
-                self.valve = self.get_valve(self.s_reshape, self.mask, threshold=98)
+                self.valve = self.get_valve(self.s_reshape, self.mask, threshold=self.threshold_mv)
                 print('finish valve segmentation in ', time.time() - start_time, "seconds")
 
-                # saving data
+                # saving segmentation and predicted window as well the embedding and sparse matrix
                 data_dict_save = self.create_dict(ep)
-                self.save_data(data_dict_save, save_location=save_location)
+                if ep != 0:
+                    self.save_data(data_dict_save, save_location=save_location)
 
                 # get evaluation scores
                 start_time = time.time()
-                eval_dict = get_scores(self.mask, self.valve, self.mask_gt, self.valve_gt)
-                self.save_scalar_summary(eval_dict, train_writer, global_step)
-                print('finish scalar eval summary in ', time.time() - start_time, "seconds")
+                if self.valve_gt is not None and self.mask_gt is not None:
+                    eval_dict = get_scores(self.mask, self.valve, self.mask_gt, self.valve_gt)
+                    self.save_scalar_summary(eval_dict, train_writer, global_step)
+                    print('finish scalar eval summary in ', time.time() - start_time, "seconds")
 
             if self.early_stopping:
                 if self.early_stopping.step(cum_mse_x_loss):
@@ -240,9 +264,8 @@ class SegNNMF(MitralSeg):
 
             start_time = time.time()
             if ep % self.save_tensorboard_summary_every == 0 or ep == self.epochs - 1:
-                #self.save_tensorboard_summary(train_writer, initialization=False, global_step=global_step)
-                pass
-            print('finish image summary in ', time.time() - start_time, "seconds")
+                self.save_tensorboard_summary(train_writer, initialization=False, global_step=global_step)
+                print('finish image summary in ', time.time() - start_time, "seconds")
 
             if self.val_loader:
                 with torch.no_grad():
@@ -277,7 +300,7 @@ class SegNNMF(MitralSeg):
                                  'embedding_regularization': embedding_reg,
                                  'l1_loss': l1_loss}
                     self.save_scalar_summary(data_dict, val_writer, global_step)
-            ep += 1
+            ep = ep + 1
 
         return eval_dict
 
@@ -317,8 +340,10 @@ class SegNNMF(MitralSeg):
 
         for j, l in enumerate(self.nnmf.neu_mf.parameters()):
             writer.add_histogram('weights_neu_mf' + str(j), l.data, global_step=global_step)
-        for j, l in enumerate(self.nnmf.threshold_mlp.parameters()):
-            writer.add_histogram('weights_threshold_net' + str(j), l.data, global_step=global_step)
+
+        # Throws errors sometimes (NaN values in l21 loss)
+        # for j, l in enumerate(self.nnmf.threshold_mlp.parameters()):
+        #     writer.add_histogram('weights_threshold_net' + str(j), l.data, global_step=global_step)
 
         inp = np.expand_dims(np.linspace(-1, 1), axis=1)
         out = self.nnmf.threshold_mlp.forward(torch.from_numpy(inp).to(self.device).float()).detach().cpu().numpy()
@@ -334,39 +359,41 @@ class SegNNMF(MitralSeg):
         if self.gmf_size > 0:
             self.save_tensorboard_embeddings(self.nnmf.gmf_u, self.nnmf.gmf_v, self.gmf_size, 'gmf_u', 'gmf_v', writer,
                                              global_step, matrix_bin)
+        # for first time
         if not initialization:
-            myocardium = self.get_video(self.myocardium,  cmap='rainbow')
-            noise = self.get_video(self.s_reshape, matrix_bin, cmap='rainbow')
+            myocardium = self.get_video(self.myocardium, matrix_bin, cmap='rainbow')
+            sparse = self.get_video(self.s_reshape, matrix_bin, cmap='rainbow')
             writer.add_video('myocardium', myocardium, global_step=global_step)
-            writer.add_video('noise', noise, global_step=global_step)
+            writer.add_video('sparse', sparse, global_step=global_step)
             valve = self.get_video(self.valve, matrix_bin, cmap='rainbow')
             writer.add_video('valve', valve, global_step=global_step)
 
         # predicted and ground truth valves
-        fig, axs = plt.subplots(1, 3)
-        fig.set_size_inches(12, 4)
-        fig.suptitle('')
-        axs[0].imshow(self.get_valve_image(0, initialization))
-        axs[1].imshow(self.get_valve_image(1, initialization))
-        axs[2].imshow(self.get_valve_image(2, initialization))
-        writer.add_figure('segmentation', fig, global_step=global_step)
+        if self.valve_gt is not None:
+            fig, axs = plt.subplots(1, 3)
+            fig.set_size_inches(12, 4)
+            fig.suptitle('')
+            for i in range(len(self.valve_gt)):
+                axs[i].imshow(self.get_valve_image(i, initialization))
+            writer.add_figure('segmentation', fig, global_step=global_step)
 
         # predicted and ground truth window
-        fig = plt.figure()
-        frame = np.squeeze(self.matrix3d[..., 0])
+        if self.mask_gt is not None:
+            fig = plt.figure()
+            frame = np.squeeze(self.matrix3d[..., 0])
 
-        if initialization:
-            mask = np.zeros(shape=self.mask_gt.shape)
-        else:
-            if len(self.mask.shape) == 3:
-                mask = np.squeeze(self.mask[..., 0])
+            if initialization:
+                mask = np.zeros(shape=self.mask_gt.shape)
             else:
-                mask = self.mask
+                if len(self.mask.shape) == 3:
+                    mask = np.squeeze(self.mask[..., 0])
+                else:
+                    mask = self.mask
 
-        color_image = np.clip(np.dstack([0.75 * frame + mask, 0.75 * frame, 0.75 * frame + self.mask_gt]), a_min=0,
-                              a_max=1)
-        plt.imshow(color_image)
-        writer.add_figure('window', fig, global_step=global_step)
+            color_image = np.clip(np.dstack([0.75 * frame + mask, 0.75 * frame, 0.75 * frame + self.mask_gt]), a_min=0,
+                                  a_max=1)
+            plt.imshow(color_image)
+            writer.add_figure('window', fig, global_step=global_step)
 
     def get_video(self, tensor, matrix_bin, cmap='binary'):
         tensor = np.transpose(tensor, axes=(2, 0, 1))
