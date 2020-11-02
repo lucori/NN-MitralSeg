@@ -11,10 +11,8 @@ from parser import ConfigParserEcho
 from shutil import copyfile
 import csv
 import socket
-
 from echos import DataMaster
-from utils_process import load_zipped_pickle
-import pickle
+import pickle5 as pickle
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -41,7 +39,8 @@ if __name__ == '__main__':
     config.read(conf)
 
     fact_type = config['Parameters']['fact_type']
-    epochs = config['Parameters']['epochs']
+    epochs = config['Parameters'].get('epochs', 0)
+    n_steps = config['Parameters'].get('n_steps', 0)
     batch_size = config['Parameters']['batch_size']
     learning_rate = config['Parameters']['learning_rate']
     mlp_size = config['Parameters']['mlp_size']
@@ -105,7 +104,7 @@ if __name__ == '__main__':
         print("\nSegmenting valve for patient: {} ({}/{})".format(patient_id, i+1, len(video_list)))
 
         #dt = load_zipped_pickle(os.path.join(dir_path, str(data_folder), video_list[i]))
-        with open(os.path.join(dir_path, str(data_folder)) + video_list[i], 'rb') as f:
+        with open(os.path.join(dir_path, str(data_folder), video_list[i]), 'rb') as f:
             dt = pickle.load(f)
 
         x = dt.matrix3d
@@ -114,7 +113,7 @@ if __name__ == '__main__':
         if str(fact_type) == 'nnmf':
 
             seg = SegNNMF(l1_mult=float(l1_mult), l21_mult=float(l21_mult), embedding_mult=float(embedding_mult),
-                          epochs=int(epochs), learning_rate=float(learning_rate), mlp_size=int(mlp_size),
+                          epochs=int(epochs), n_steps=int(n_steps), learning_rate=float(learning_rate), mlp_size=int(mlp_size),
                           gmf_size=int(gmf_size), batchsize=int(batch_size), num_workers=int(num_workers), device=device,
                           embedding_nmf_init=bool(embedding_nmf_init), gmf_net_init=gmf_net_init, mlp_layers=mlp_layers,
                           threshold_layers=threshold_layers, window_size=window_size, train_test_split=train_test_split,

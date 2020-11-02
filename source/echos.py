@@ -4,8 +4,7 @@ import numpy as np
 import shutil
 import scipy.misc
 import glob
-
-from utils_process import save_zipped_pickle
+import pickle5 as pickle
 from video_processing import EchoProcess
 import pickle
 import json
@@ -437,7 +436,7 @@ class Echo:
         if not os.path.exists(out_path):
             os.makedirs(out_path)
 
-        save_zipped_pickle(self, os.path.join(out_path, echo_name + '.pkl'),
-                           protocol=-1)
+        with open(os.path.join(out_path, echo_name + '.pkl'), 'wb') as f:
+            pickle.dump(self, f, protocol=-1)
 
         self.pickle_folder = out_path

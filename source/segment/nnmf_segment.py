@@ -22,7 +22,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 
 class SegNNMF(MitralSeg):
 
-    def __init__(self, l1_mult, l21_mult, embedding_mult, epochs, learning_rate, mlp_size, gmf_size, batchsize,
+    def __init__(self, l1_mult, l21_mult, embedding_mult, epochs, n_steps, learning_rate, mlp_size, gmf_size, batchsize,
                  num_workers, device, embedding_nmf_init, gmf_net_init, mlp_layers, threshold_layers, window_size,
                  save_data_every, save_tensorboard_summary_every, search_window_size, opt_flow_window_size,
                  train_test_split, patience, min_delta, early_stopping, connected_struct, morph_op, option,
@@ -36,6 +36,7 @@ class SegNNMF(MitralSeg):
         self.embedding_mult = embedding_mult
         self.spat_temp_mult = spat_temp_mult
         self.epochs = epochs
+        self.n_steps = n_steps
         self.lr = learning_rate
         self.batchsize = batchsize
         self.num_workers = num_workers
@@ -84,7 +85,8 @@ class SegNNMF(MitralSeg):
         self.nnmf.set_matrix(self.matrix2d, embedding_nmf_init)
         # create data loader
         print('loading dataset')
-
+        if self.n_steps:
+            self.epochs = int(self.n_steps / (matrix3d.size / self.batchsize))
         (self.train_loader, self.val_loader) = load_dataset(self.matrix2d, batch_size=self.batchsize,
                                                             num_workers=self.num_workers,
                                                             train_test_split=self.train_test_split)

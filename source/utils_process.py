@@ -1,8 +1,6 @@
 import cv2
 import os
 import imageio
-import gzip
-import pickle5 as pickle
 import numpy as np
 
 DIR_PATH = os.path.dirname(os.path.realpath(__file__))
@@ -298,14 +296,3 @@ def save_picture(out_file_dir, file_path, pic):
     out_file_path = os.path.join(out_file_dir, os.path.splitext(os.path.basename(file_path))[0] + '.jpg')
     os.makedirs(out_file_dir, exist_ok=True)
     imageio.imwrite(out_file_path, pic)
-
-
-def save_zipped_pickle(obj, filename, protocol=-1):
-    with gzip.open(filename, 'wb') as f:
-        pickle.dump(obj, f, protocol)
-
-
-def load_zipped_pickle(filename):
-    with gzip.open(filename, 'rb') as f:
-        loaded_object = pickle.load(f)
-        return loaded_object
