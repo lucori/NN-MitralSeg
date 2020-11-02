@@ -2,9 +2,8 @@
 
 ![Segmenting the Mitral Valve with Nural Collaborative Filtering](images/segs.png)
 
-This is the official repository of Neural collaborative filtering for unsupervised mitral valve segmentation in echocardiography.
-
-[[Arxiv](https://arxiv.org/)]
+This is the official repository of Neural collaborative filtering for unsupervised mitral valve segmentation in echocardiography. The journal paper
+has been published in [Artificial Intelligence in Medicine journal](https://www.sciencedirect.com/science/article/pii/S0933365720312409).
 
 ## Requirements
 This code is tested on Pytorch 1.3.0. Requirements (including pytroch) can be installed using:
@@ -28,4 +27,11 @@ Note: the conda environamte needs first to be activated.
 This will load the data, apply the collaborative filtering for each video, predict the segmentation masks for each frame and save the results in the nn-mitralseg/out/SegNNMF/original/<time-stamp> folder.
 
 ## When using this code, please cite
-(...) 
+@article{corinzia2020neural,
+  title={Neural collaborative filtering for unsupervised mitral valve segmentation in echocardiography},
+  author={Corinzia, Luca and Laumer, Fabian and Candreva, Alessandro and Taramasso, Maurizio and Maisano, Francesco and Buhmann, Joachim M},
+  journal={Artificial Intelligence in Medicine},
+  pages={101975},
+  year={2020},
+  publisher={Elsevier}
+}
