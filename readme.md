@@ -16,8 +16,8 @@ source activate mitral_valve_seg
 ```
 
 ## Data
-We provide the segmentation labels and the region of interest for the Mitral Valve of 46 videos selected from the publicly available data set [EchoNet-Dynacmic](https://echonet.github.io/dynamic/).
-In order to run the code, the corresponding videos need to be downloaded from [EchoNet-Dynacmic](https://echonet.github.io/dynamic/) and placed in the ordner with the correct video ID under nn-mitralseg/data/in/raw/echo_net/.
+We provide the segmentation labels and the region of interest for the Mitral Valve of 46 videos selected from the publicly available data set EchoNet-Dynamic.
+In order to run the code, the corresponding videos need to be downloaded from [EchoNet-Dynamic](https://echonet.github.io/dynamic/) and placed in the respective folder (with the correct video ID) under nn-mitralseg/data/in/raw/echo_net/.
 Each folder already contains three mask files (<frame_number_starting_at_1>_mask.png) depicting the segmentation maps and one file (box.jpg) describing the region of interest for the mitral valve.
 
 ## Run the model
