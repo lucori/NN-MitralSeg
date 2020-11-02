@@ -1,0 +1,3 @@
+pickle5==0.0.10
+pyqt5-sip==4.19.18
+pyqtwebengine==5.12.1
