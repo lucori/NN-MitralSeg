@@ -8,9 +8,12 @@ has been published in [Artificial Intelligence in Medicine journal](https://www.
 ## Requirements
 This code is tested on Pytorch 1.3.0. Requirements (including pytroch) can be installed using:
 ```bash
-conda env create -f environment.yml
+conda env create -f requirements.yml
 ```
-or by using the reduced environment file enviroment_reduced.yml for installation.
+Activate the environment as 
+```bash
+source activate mitral_valve_seg
+```
 
 ## Data
 We provide the segmentation labels and the region of interest for the Mitral Valve of 46 videos selected from the publicly available data set [EchoNet-Dynacmic](https://echonet.github.io/dynamic/).
