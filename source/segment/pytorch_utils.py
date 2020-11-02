@@ -24,15 +24,15 @@ class MyDataset(Dataset):
         return self.__size
 
 
-def load_dataset(matrix2d, batch_size, num_workers, train_test_split=None):
+def load_dataset(matrix2d, batch_size, num_workers, train_test_split=None, valve=None):
     print('getting ind matrix')
     ind_mat = matrix_to_pixel_frame_target(matrix2d)
     dataset = MyDataset(ind_mat)
-    if not train_test_split:
+    if not train_test_split and not valve:
         loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers,
                                              drop_last=False)
         loader = (loader, None)
-    else:
+    elif train_test_split:
         tot_num_samples = len(dataset)
         n_train = int(tot_num_samples*train_test_split)
         n_val = int(tot_num_samples*(1-train_test_split))
@@ -44,6 +44,17 @@ def load_dataset(matrix2d, batch_size, num_workers, train_test_split=None):
                                                  shuffle=True, num_workers=num_workers,
                                                  drop_last=False)
         loader = (train_loader, val_loader)
+    else:
+        valve_frames = [int(list(v.keys())[0])-1 for v in valve]
+        ind_mat_train = ind_mat[ind_mat[:, 1] < (valve_frames[-1]+valve_frames[-2])/2]
+        ind_mat_val = ind_mat[ind_mat[:, 1] >= (valve_frames[-1] + valve_frames[-2]) / 2]
+        dataset_train = MyDataset(ind_mat_train)
+        dataset_val = MyDataset(ind_mat_val)
+        loader = (torch.utils.data.DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers,
+                                              drop_last=False),
+                  torch.utils.data.DataLoader(dataset_val, batch_size=batch_size, shuffle=True,
+                                              num_workers=num_workers,
+                                              drop_last=False))
     return loader
 
 

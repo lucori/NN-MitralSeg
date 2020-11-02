@@ -22,19 +22,20 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 
 class SegNNMF(MitralSeg):
 
-    def __init__(self, l1_mult, l21_mult, embedding_mult, n_steps, learning_rate, mlp_size, gmf_size, batchsize,
+    def __init__(self, l1_mult, l21_mult, embedding_mult, epochs, learning_rate, mlp_size, gmf_size, batchsize,
                  num_workers, device, embedding_nmf_init, gmf_net_init, mlp_layers, threshold_layers, window_size,
                  save_data_every, save_tensorboard_summary_every, search_window_size, opt_flow_window_size,
                  train_test_split, patience, min_delta, early_stopping, connected_struct, morph_op, option,
-                 threshold_mv, threshold_wd):
+                 threshold_mv, threshold_wd, spat_temp_mult):
 
         super(SegNNMF, self).__init__()
         self.mlp_size = mlp_size
         self.gmf_size = gmf_size
-        self.n_steps = n_steps
         self.l1_mult = l1_mult
         self.l21_mult = l21_mult
         self.embedding_mult = embedding_mult
+        self.spat_temp_mult = spat_temp_mult
+        self.epochs = epochs
         self.lr = learning_rate
         self.batchsize = batchsize
         self.num_workers = num_workers
@@ -65,7 +66,6 @@ class SegNNMF(MitralSeg):
         self.embedding_opt = None
         self.neu_mf_opt = None
         self.threshold_opt = None
-        self.epochs = None
         self.threshold_mv = threshold_mv
         self.threshold_wd = threshold_wd
 
@@ -84,7 +84,7 @@ class SegNNMF(MitralSeg):
         self.nnmf.set_matrix(self.matrix2d, embedding_nmf_init)
         # create data loader
         print('loading dataset')
-        self.epochs = int(self.n_steps / (matrix3d.size / self.batchsize))
+
         (self.train_loader, self.val_loader) = load_dataset(self.matrix2d, batch_size=self.batchsize,
                                                             num_workers=self.num_workers,
                                                             train_test_split=self.train_test_split)
@@ -116,10 +116,17 @@ class SegNNMF(MitralSeg):
         loss_neu_mf.backward(retain_graph=True)
         self.neu_mf_opt.step()
 
-    def train_embedding(self, mse_x_loss, embedding_reg):
+    def train_embedding(self, mse_x_loss, embedding_reg, spatial_ref, temporal_reg, valve=None):
         self.embedding_opt.zero_grad()
-        embedding_loss = mse_x_loss + self.embedding_mult * embedding_reg
+        embedding_loss = mse_x_loss + self.embedding_mult * embedding_reg + \
+                         self.spat_temp_mult * (spatial_ref + temporal_reg)
         embedding_loss.backward(retain_graph=True)
+        if valve:
+            valve_frames = [int(list(v.keys())[0])-1 for v in valve]
+            mid = int((valve_frames[-1]+valve_frames[-2])/2)
+            for par in self.embedding_params:
+                if par.shape[0] == self.m:
+                    par.grad[mid:, ...] = 0
         self.embedding_opt.step()
 
     def train(self, save_location=None):
@@ -138,7 +145,8 @@ class SegNNMF(MitralSeg):
         eval_dict = {}
         if self.early_stopping:
             self.early_stopping = EarlyStopping(patience=self.patience, mode='min', percentage=True,
-                                                min_delta=self.min_delta)
+                                            min_delta=self.min_delta)
+        training_time = 0
         while ep < self.epochs:
 
             print("Epoch {} of {}".format(ep, self.epochs - 1))
@@ -170,16 +178,23 @@ class SegNNMF(MitralSeg):
                 l1_loss = self.l1_loss(s_out)
                 l21_loss = 0  # self.l21_loss(self.s)
                 embedding_reg = self.nnmf.embedding_regularization(pixel, frame)
+                spatial_reg = self.nnmf.spatial_regularization(self.device)
+                temporal_reg = self.nnmf.temporal_regularization(self.device)
 
                 # backward and step
                 self.train_neu_mf(mse_x_loss)
-                self.train_embedding(mse_x_loss, embedding_reg)
+
+                self.train_embedding(mse_x_loss, embedding_reg, spatial_reg, temporal_reg)
                 self.train_threshold(mse_xs_loss, l1_loss, l21_loss)
 
                 # update x_hat and s
                 start_time = time.time()
                 self.x_hat[pixel, frame] = torch.squeeze(x_out.detach())
                 self.s = self.s.detach()
+
+                time_detach += time.time() - start_time
+                training_time += time.time() - start_time_epoch
+
                 time_detach = time_detach + time.time() - start_time
 
                 if global_step % (self.epochs*5) == 0:
@@ -195,21 +210,6 @@ class SegNNMF(MitralSeg):
                     self.save_scalar_summary(data_dict, train_writer, global_step)
                     self.s_reshape = np.reshape(self.s.cpu().numpy(), newshape=(self.vert, self.horz, self.m))
                     self.myocardium = np.reshape(self.x_hat.cpu().numpy(), newshape=(self.vert, self.horz, self.m))
-
-                    ## takes a lot of space if saved regularily
-                    # mlp_u = self.nnmf.mlp_u.weight.detach().cpu().numpy()
-                    # mlp_v = self.nnmf.mlp_v.weight.detach().cpu().numpy()
-                    # gmf_u = self.nnmf.gmf_u.weight.detach().cpu().numpy()
-                    # gmf_v = self.nnmf.gmf_v.weight.detach().cpu().numpy()
-
-                    # data_dict = {'myocardium' + str(global_step): self.myocardium,
-                    #              's' + str(global_step): self.s_reshape,
-                    #              'gmf_u' + str(global_step): gmf_u,
-                    #              'gmf_v' + str(global_step): gmf_v,
-                    #              'mlp_u' + str(global_step): mlp_u,
-                    #              'mlp_v' + str(global_step): mlp_v}
-
-                    # self.save_data(data_dict, save_location=save_location)
 
                 if self.early_stopping:
                     cum_mse_xs_loss += mse_xs_loss.detach() / len(self.train_loader)
@@ -265,7 +265,8 @@ class SegNNMF(MitralSeg):
             start_time = time.time()
             if ep % self.save_tensorboard_summary_every == 0 or ep == self.epochs - 1:
                 self.save_tensorboard_summary(train_writer, initialization=False, global_step=global_step)
-                print('finish image summary in ', time.time() - start_time, "seconds")
+                pass
+            print('finish image summary in ', time.time() - start_time, "seconds")
 
             if self.val_loader:
                 with torch.no_grad():
@@ -274,6 +275,8 @@ class SegNNMF(MitralSeg):
                     mse_x_loss = 0
                     l1_loss = 0
                     embedding_reg = 0
+                    spatial_reg = 0
+                    temporal_reg = 0
                     for batch_id, batch in enumerate(self.val_loader, 0):
                         pixel, frame, target = Variable(batch[0]), Variable(batch[1]), Variable(batch[2])
                         # send x_hat and s to gpu
@@ -290,18 +293,27 @@ class SegNNMF(MitralSeg):
                         mse_x_loss += nn.functional.mse_loss(target, x_out)
                         l1_loss += self.l1_loss(s_out)
                         embedding_reg += self.nnmf.embedding_regularization(pixel,
-                                                                            frame) * self.beta / self.batchsize_eff
+                                                                            frame) * self.embedding_mult / self.batchsize_eff
+                        spatial_reg += self.nnmf.spatial_regularization(self.device)
+                        temporal_reg += self.nnmf.temporal_regularization(self.device)
+
                     mse_xs_loss = mse_xs_loss / len(self.val_loader)
                     mse_x_loss = mse_x_loss / len(self.val_loader)
                     l1_loss = l1_loss / len(self.val_loader)
                     embedding_reg = embedding_reg / len(self.val_loader)
+                    spatial_reg = spatial_reg / len(self.val_loader)
+                    temporal_reg = temporal_reg / len(self.val_loader)
                     data_dict = {'mse_x': mse_x_loss,
                                  'mse_xs': mse_xs_loss,
                                  'embedding_regularization': embedding_reg,
-                                 'l1_loss': l1_loss}
+                                 'l1_loss': l1_loss,
+                                 'spatial_reg': spatial_reg,
+                                 'temporal_reg': temporal_reg}
+
                     self.save_scalar_summary(data_dict, val_writer, global_step)
             ep = ep + 1
 
+        eval_dict.update({'time': training_time})
         return eval_dict
 
     def save_scalar_summary(self, dict, writer, global_step):
@@ -341,9 +353,6 @@ class SegNNMF(MitralSeg):
         for j, l in enumerate(self.nnmf.neu_mf.parameters()):
             writer.add_histogram('weights_neu_mf' + str(j), l.data, global_step=global_step)
 
-        # Throws errors sometimes (NaN values in l21 loss)
-        # for j, l in enumerate(self.nnmf.threshold_mlp.parameters()):
-        #     writer.add_histogram('weights_threshold_net' + str(j), l.data, global_step=global_step)
 
         inp = np.expand_dims(np.linspace(-1, 1), axis=1)
         out = self.nnmf.threshold_mlp.forward(torch.from_numpy(inp).to(self.device).float()).detach().cpu().numpy()
@@ -352,8 +361,8 @@ class SegNNMF(MitralSeg):
         writer.add_figure('threshold_fun', fig, global_step=global_step)
 
         if self.mlp_size > 0:
-            for j, l in enumerate(self.nnmf.mlp.parameters()):
-                writer.add_histogram('weights_' + str(j), l.data, global_step=global_step)
+            #for j, l in enumerate(self.nnmf.mlp.parameters()):
+            #    writer.add_histogram('weights_' + str(j), l.data, global_step=global_step)
             self.save_tensorboard_embeddings(self.nnmf.mlp_u, self.nnmf.mlp_v, self.mlp_size, 'mlp_u', 'mlp_v', writer,
                                              global_step, matrix_bin)
         if self.gmf_size > 0:
@@ -361,6 +370,8 @@ class SegNNMF(MitralSeg):
                                              global_step, matrix_bin)
         # for first time
         if not initialization:
+            myocardium = self.get_video(self.myocardium, matrix_bin,  cmap='rainbow')
+            noise = self.get_video(self.s_reshape, matrix_bin, cmap='rainbow')
             myocardium = self.get_video(self.myocardium, matrix_bin, cmap='rainbow')
             sparse = self.get_video(self.s_reshape, matrix_bin, cmap='rainbow')
             writer.add_video('myocardium', myocardium, global_step=global_step)

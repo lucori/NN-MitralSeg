@@ -28,7 +28,9 @@ def get_scores(mask, valve, mask_gt, valve_gt):
     window_acc = _get_window_acc(mask_gt, mask)
     window_iou = _get_iou(mask_gt, mask)
 
-    return {'iou': np.mean(ious), 'dice': np.mean(dices), 'window_acc': window_acc, 'window_iou': window_iou}
+    return {'iou': np.mean(ious), 'dice': np.mean(dices), 'window_acc': window_acc, 'window_iou': window_iou,
+            'dice_1': dices[0], 'dice_2': dices[1], 'dice_3': dices[2], 'iou_1': ious[0], 'iou_2':
+                ious[1], 'iou_3': ious[2]}
 
 
 def _get_iou(target, prediction):

@@ -14,6 +14,7 @@ import socket
 
 from echos import DataMaster
 from utils_process import load_zipped_pickle
+import pickle
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -40,7 +41,7 @@ if __name__ == '__main__':
     config.read(conf)
 
     fact_type = config['Parameters']['fact_type']
-    n_steps = config['Parameters']['n_steps']
+    epochs = config['Parameters']['epochs']
     batch_size = config['Parameters']['batch_size']
     learning_rate = config['Parameters']['learning_rate']
     mlp_size = config['Parameters']['mlp_size']
@@ -48,6 +49,7 @@ if __name__ == '__main__':
     l1_mult = config['Parameters']['l1_mult']
     l21_mult = config['Parameters']['l21_mult']
     embedding_mult = config['Parameters']['embedding_mult']
+    spat_temp_mult = config['Parameters']['spat_temp_mult']
     embedding_nmf_init = config.getboolean('Parameters', 'embedding_nmf_init')
     gmf_net_init = config.getboolean('Parameters', 'gmf_net_init')
     data_folder = config['Parameters']['data_folder']
@@ -78,8 +80,7 @@ if __name__ == '__main__':
 
     patients = json.loads(config['Load_Save']['patients'])
 
-    if train_test_split == 1:
-        train_test_split = None
+    if train_test_split == 1: train_test_split = None
 
     if load_raw_data:
         print("Loading raw data.")
@@ -103,7 +104,9 @@ if __name__ == '__main__':
         patient_id = video_list[i].split('.')[0]
         print("\nSegmenting valve for patient: {} ({}/{})".format(patient_id, i+1, len(video_list)))
 
-        dt = load_zipped_pickle(os.path.join(dir_path, str(data_folder), video_list[i]))
+        #dt = load_zipped_pickle(os.path.join(dir_path, str(data_folder), video_list[i]))
+        with open(os.path.join(dir_path, str(data_folder)) + video_list[i], 'rb') as f:
+            dt = pickle.load(f)
 
         x = dt.matrix3d
         x = np.nan_to_num(x)
@@ -111,12 +114,13 @@ if __name__ == '__main__':
         if str(fact_type) == 'nnmf':
 
             seg = SegNNMF(l1_mult=float(l1_mult), l21_mult=float(l21_mult), embedding_mult=float(embedding_mult),
-                          n_steps=int(n_steps), learning_rate=float(learning_rate), mlp_size=int(mlp_size),
+                          epochs=int(epochs), learning_rate=float(learning_rate), mlp_size=int(mlp_size),
                           gmf_size=int(gmf_size), batchsize=int(batch_size), num_workers=int(num_workers), device=device,
                           embedding_nmf_init=bool(embedding_nmf_init), gmf_net_init=gmf_net_init, mlp_layers=mlp_layers,
                           threshold_layers=threshold_layers, window_size=window_size, train_test_split=train_test_split,
                           patience=patience, min_delta=min_delta, early_stopping=early_stopping,
-                          save_data_every=save_data_every, save_tensorboard_summary_every=save_tensorboard_summary_every,
+                          spat_temp_mult=float(spat_temp_mult), save_data_every=save_data_every,
+                          save_tensorboard_summary_every=save_tensorboard_summary_every,
                           search_window_size=search_window_size, opt_flow_window_size=float(opt_flow_window_size),
                           connected_struct=connected_struct, morph_op=morph_op, option=option, threshold_mv=threshold_mv,
                           threshold_wd=threshold_wd)
@@ -126,6 +130,7 @@ if __name__ == '__main__':
                           option=option, max_iter=20, thresh1=99, thresh2=99.2,
                           time_series_masking=time_series_masking, threshold_wd=threshold_wd)
 
+        seg.set_labels(dt.labels)
         seg.set_x(x)
         seg.set_save_location(os.path.join(date_time, patient_id))
         seg.set_labels(dt.labels)

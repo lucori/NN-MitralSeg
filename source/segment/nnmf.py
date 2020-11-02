@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 from utils import softminus
+import math
+import numbers
+from torch.nn import functional as F
 
 
 class SubNet(nn.ModuleList):
@@ -13,6 +16,72 @@ class SubNet(nn.ModuleList):
         for l in self:
             output = l(output)
         return output
+
+
+class GaussianSmoothing(nn.Module):
+    """
+    Apply gaussian smoothing on a
+    1d, 2d or 3d tensor. Filtering is performed seperately for each channel
+    in the input using a depthwise convolution.
+    Arguments:
+        channels (int, sequence): Number of channels of the input tensors. Output will
+            have this number of channels as well.
+        kernel_size (int, sequence): Size of the gaussian kernel.
+        sigma (float, sequence): Standard deviation of the gaussian kernel.
+        dim (int, optional): The number of dimensions of the data.
+            Default value is 2 (spatial).
+    """
+    def __init__(self, channels, kernel_size, sigma, dim=2):
+        super(GaussianSmoothing, self).__init__()
+        if isinstance(kernel_size, numbers.Number):
+            kernel_size = [kernel_size] * dim
+        if isinstance(sigma, numbers.Number):
+            sigma = [sigma] * dim
+
+        # The gaussian kernel is the product of the
+        # gaussian function of each dimension.
+        kernel = 1
+        meshgrids = torch.meshgrid(
+            [
+                torch.arange(size, dtype=torch.float32)
+                for size in kernel_size
+            ]
+        )
+        for size, std, mgrid in zip(kernel_size, sigma, meshgrids):
+            mean = (size - 1) / 2
+            kernel *= 1 / (std * math.sqrt(2 * math.pi)) * \
+                      torch.exp(-((mgrid - mean) / std) ** 2 / 2)
+
+        # Make sure sum of values in gaussian kernel equals 1.
+        kernel = kernel / torch.sum(kernel)
+
+        # Reshape to depthwise convolutional weight
+        kernel = kernel.view(1, 1, *kernel.size())
+        kernel = kernel.repeat(channels, *[1] * (kernel.dim() - 1))
+
+        self.register_buffer('weight', kernel)
+        self.groups = channels
+
+        if dim == 1:
+            self.conv = F.conv1d
+        elif dim == 2:
+            self.conv = F.conv2d
+        elif dim == 3:
+            self.conv = F.conv3d
+        else:
+            raise RuntimeError(
+                'Only 1, 2 and 3 dimensions are supported. Received {}.'.format(dim)
+            )
+
+    def forward(self, input):
+        """
+        Apply gaussian filter to input.
+        Arguments:
+            input (torch.Tensor): Input to apply gaussian filter on.
+        Returns:
+            filtered (torch.Tensor): Filtered output.
+        """
+        return self.conv(input, weight=self.weight, groups=self.groups)
 
 
 class NNMF(nn.Module):
@@ -64,8 +133,8 @@ class NNMF(nn.Module):
             self.gmf_u = initialize_embedding(softminus(embedding_nmf_init[0]))
             self.gmf_v = initialize_embedding(softminus(embedding_nmf_init[1]))
         else:
-            self.gmf_u = initialize_embedding(get_random_init((self.num_pixels,self.gmf_size)))
-            self.gmf_v = initialize_embedding(get_random_init((self.num_frames,self.gmf_size)))
+            self.gmf_u = initialize_embedding(get_random_init((self.num_pixels, self.gmf_size)))
+            self.gmf_v = initialize_embedding(get_random_init((self.num_frames, self.gmf_size)))
 
         self.mlp_u = initialize_embedding(get_random_init((self.num_pixels, self.mlp_size)))
         self.mlp_v = initialize_embedding(get_random_init((self.num_frames, self.mlp_size)))
@@ -127,6 +196,7 @@ class NNMF(nn.Module):
 
     def embedding_parameters(self):
         embedding_params = []
+
         if self.mlp_size != 0:
             embedding_params += list(self.mlp_u.parameters()) + list(self.mlp_v.parameters())
         if self.gmf_size != 0:
@@ -141,4 +211,55 @@ class NNMF(nn.Module):
         if self.mlp_size != 0:
             loss += torch.norm(self.embedding_activation((self.mlp_u(pixel)))) + \
                     torch.norm(self.embedding_activation((self.mlp_v(frame))))
-        return loss/pixel.shape[0]
+        return loss / pixel.shape[0]
+
+    def spatial_regularization(self, device):
+        loss = 0
+
+        def refactor_embedding(emb):
+            emb_r = self.embedding_activation(emb)
+            emb_r = emb_r.view([1, int(np.sqrt(self.num_pixels)), int(np.sqrt(self.num_pixels)), -1])
+            emb_r = emb_r.permute([0, 3, 1, 2])
+            return emb_r
+
+        def add_loss(embedding_weight, size):
+            kernel_size = 15
+            pad = list(int((kernel_size-1)/2)*np.array([1, 1, 1, 1, 0, 0, 0, 0]))
+            gaussian_sm = GaussianSmoothing(channels=size, kernel_size=kernel_size, sigma=1, dim=2).to(device)
+            gmf_u = refactor_embedding(embedding_weight)
+            gmf_u_sq = torch.mul(gmf_u, gmf_u)
+            conv_gmf = torch.nn.functional.pad(gaussian_sm(gmf_u),
+                                               pad=pad, mode='constant', value=0.)
+            conv_gmf_sq = torch.nn.functional.pad(gaussian_sm(gmf_u_sq), pad=pad, mode='constant', value=0.)
+            return (torch.sum(gmf_u_sq.flatten()) + torch.sum(conv_gmf_sq) -
+                    2 * torch.dot(gmf_u.flatten(), conv_gmf.flatten()))
+
+        if self.gmf_size != 0: loss += add_loss(self.gmf_u.weight, self.gmf_size) / self.num_pixels
+        if self.mlp_size != 0: loss += add_loss(self.mlp_u.weight, self.mlp_size) / self.num_pixels
+
+        return loss
+
+    def temporal_regularization(self, device):
+        loss = 0
+
+        def refactor_embedding(emb):
+            emb_r = self.embedding_activation(emb)
+            emb_r = emb_r.view([1, self.num_frames, -1])
+            emb_r = emb_r.permute([0, 2, 1])
+            return emb_r
+
+        def add_loss(embedding_weight, size):
+            kernel_size = 15
+            pad = list(int((kernel_size - 1) / 2) * np.array([1, 1, 0, 0, 0, 0]))
+            gaussian_sm = GaussianSmoothing(channels=size, kernel_size=kernel_size, sigma=1, dim=1).to(device)
+            gmf_u = refactor_embedding(embedding_weight)
+            gmf_u_sq = torch.mul(gmf_u, gmf_u)
+            conv_gmf = torch.nn.functional.pad(gaussian_sm(gmf_u), pad=pad, mode='constant', value=0.)
+            conv_gmf_sq = torch.nn.functional.pad(gaussian_sm(gmf_u_sq), pad=pad, mode='constant', value=0.)
+            return (torch.sum(gmf_u_sq.flatten()) + torch.sum(conv_gmf_sq) -
+                    2 * torch.dot(gmf_u.flatten(), conv_gmf.flatten()))
+
+        if self.gmf_size != 0: loss += add_loss(self.gmf_v.weight, self.gmf_size) / self.num_frames
+        if self.mlp_size != 0: loss += add_loss(self.mlp_v.weight, self.mlp_size) / self.num_frames
+
+        return loss
