@@ -28,6 +28,10 @@ python main.py --config configuration/NNMF.ini
 Note: the conda environamte needs first to be activated.
 
 This will load the data, apply the collaborative filtering for each video, predict the segmentation masks for each frame and save the results in the nn-mitralseg/out/SegNNMF/original/<time-stamp> folder.
+You can track the progress of the training launching tensorboard as
+```bash
+tensorboard --logdir runs/*
+```  
 
 ## When using this code, please cite
 @article{corinzia2020neural,
